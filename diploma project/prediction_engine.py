@@ -1,10 +1,7 @@
-# ------------------------------------------------------------
-# prediction_engine.py — Final version with course integration
-# ------------------------------------------------------------
+from __future__ import annotations
 
 import numpy as np
 
-# Initial diploma weights
 WEIGHTS = {
     "alpha": 0.35,   # Ga
     "beta": 0.25,    # Ar
@@ -13,73 +10,86 @@ WEIGHTS = {
     "epsilon": 0.05  # Ph
 }
 
-K = 0.9   # correction factor
+K = 0.9
 
 
 def safe_float(x, default=None):
     try:
+        if x is None or x == "":
+            return default
         return float(x)
-    except:
+    except Exception:
         return default
 
 
-def compute_Ga(student):
-    """Normalized academic performance (Diploma definition)."""
+def to_01(x, default=0.0) -> float:
+    v = safe_float(x, default)
+    if v is None:
+        v = default
+    if v > 1.5:
+        v = v / 100.0
+    return float(np.clip(v, 0.0, 1.0))
+
+
+def compute_Ga(student) -> float | None:
     gcur = safe_float(student.get("Gcurrent"))
     gmin = safe_float(student.get("Gmin"))
     gmax = safe_float(student.get("Gmax"))
 
     if gcur is None or gmin is None or gmax is None:
-        # fallback: if missing – approximate Ga using Cp
         return None
-
     if gmax == gmin:
         return None
 
-    return (gcur - gmin) / (gmax - gmin)
+    ga = (gcur - gmin) / (gmax - gmin)
+    return float(np.clip(ga, 0.0, 1.0))
 
 
-def compute_Ar(courses):
-    """Attendance: number of enabled courses / total."""
+def compute_Ar(student, courses) -> float:
+    if student is not None and student.get("Ar") not in (None, ""):
+        return to_01(student.get("Ar"), default=0.0)
+
     if not courses:
-        return 0
-    
-    enabled = sum(1 for c in courses if c["enabled"])
-    return enabled / len(courses)
+        return 0.0
+    enabled = sum(1 for c in courses if int(c.get("enabled", 0)) == 1)
+    return float(enabled / len(courses))
 
 
-def compute_Cp(courses):
-    """Course performance: mean(grade/100)."""
-    grades = [
-        safe_float(c["grade"]) / 100
-        for c in courses
-        if c["enabled"] and safe_float(c["grade"]) is not None
-    ]
+def compute_Cp(courses) -> float:
+    grades = []
+    for c in courses or []:
+        if int(c.get("enabled", 0)) != 1:
+            continue
+        g = safe_float(c.get("grade"))
+        if g is None:
+            continue
+        grades.append(g / 100.0)
 
     if not grades:
-        return 0
+        return 0.0
 
-    return sum(grades) / len(grades)
+    cp = sum(grades) / len(grades)
+    return float(np.clip(cp, 0.0, 1.0))
 
 
 def predict(student, courses):
-    # --------------------------------------------------------
-    # 1. Extract factors
-    # --------------------------------------------------------
     Ga = compute_Ga(student)
-    Ar = compute_Ar(courses)
     Cp = compute_Cp(courses)
-    Ls = safe_float(student.get("Ls"), 0)
-    Ph = safe_float(student.get("Ph"), 0)
-    actual = safe_float(student.get("actual"))
+    Ar = compute_Ar(student, courses)
 
-    # fallback for Ga
+    Ls = to_01(student.get("Ls"), default=0.0)
+    Ph = to_01(student.get("Ph"), default=0.0)
+
+    actual = safe_float(student.get("actual"))
+    actual_n = None if actual is None else to_01(actual, default=0.0)
+
     if Ga is None:
         Ga = Cp
 
-    # --------------------------------------------------------
-    # 2. Compute INITIAL P using diploma formula
-    # --------------------------------------------------------
+    Ga = float(np.clip(Ga, 0.0, 1.0))
+    Ar = float(np.clip(Ar, 0.0, 1.0))
+    Cp = float(np.clip(Cp, 0.0, 1.0))
+
     P_initial = (
         WEIGHTS["alpha"] * Ga +
         WEIGHTS["beta"]  * Ar +
@@ -87,43 +97,35 @@ def predict(student, courses):
         WEIGHTS["delta"] * Ls +
         WEIGHTS["epsilon"] * Ph
     )
-    P_initial = float(np.clip(P_initial, 0, 1))
+    P_initial = float(np.clip(P_initial, 0.0, 1.0))
 
-    # No correction possible
-    if actual is None:
-        return P_initial, None, WEIGHTS
+    if actual_n is None:
+        return P_initial, None, dict(WEIGHTS)
 
-    # --------------------------------------------------------
-    # 3. Error for correction
-    # --------------------------------------------------------
-    error = actual - P_initial
+    error = actual_n - P_initial
 
-    # Diploma adaptive rules:
     deltaG = error * Ga * abs(error)
     deltaA = error * Ar * abs(error)
 
-    # --------------------------------------------------------
-    # 4. Apply correction for α and β
-    # --------------------------------------------------------
     new_alpha = WEIGHTS["alpha"] * (1 + K * deltaG)
-    new_beta  = WEIGHTS["beta"]  * (1 + K * deltaA)
+    new_beta = WEIGHTS["beta"] * (1 + K * deltaA)
 
     updated = {
         "alpha": new_alpha,
         "beta": new_beta,
         "gamma": WEIGHTS["gamma"],
         "delta": WEIGHTS["delta"],
-        "epsilon": WEIGHTS["epsilon"]
+        "epsilon": WEIGHTS["epsilon"],
     }
 
-    # Normalize weights (sum = 1)
     s = sum(updated.values())
-    for k in updated:
-        updated[k] /= s
+    if s <= 0:
+        updated = dict(WEIGHTS)
+        s = sum(updated.values())
 
-    # --------------------------------------------------------
-    # 5. Compute ADJUSTED probability
-    # --------------------------------------------------------
+    for k in updated:
+        updated[k] = float(updated[k] / s)
+
     P_adjusted = (
         updated["alpha"] * Ga +
         updated["beta"]  * Ar +
@@ -131,7 +133,6 @@ def predict(student, courses):
         updated["delta"] * Ls +
         updated["epsilon"] * Ph
     )
-
-    P_adjusted = float(np.clip(P_adjusted, 0, 1))
+    P_adjusted = float(np.clip(P_adjusted, 0.0, 1.0))
 
     return P_initial, P_adjusted, updated

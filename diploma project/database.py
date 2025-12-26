@@ -1,4 +1,3 @@
-# database.py
 import os
 import sqlite3
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -8,7 +7,7 @@ DB_PATH = os.path.join(BASE_DIR, "system.db")
 
 DEFAULT_COURSES = [
     "Mathematics",
-    "Physics",
+    "Probability and Statistics",
     "Programming",
     "Discrete Structures",
     "Databases",
@@ -20,11 +19,9 @@ DEFAULT_COURSES = [
 
 class Database:
     def __init__(self, path: str = DB_PATH):
-        # абсолютний шлях, щоб не було різних working directory
         self.path = os.path.abspath(path)
         self._ensure_init()
 
-    # ---------------- INTERNAL ----------------
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path)
         conn.row_factory = sqlite3.Row
@@ -64,16 +61,11 @@ class Database:
         finally:
             conn.close()
 
-    # ---------------- INIT ----------------
     def _ensure_init(self) -> None:
-        """
-        Always ensures required tables exist. Safe on empty/old DB.
-        """
         conn = self._connect()
         try:
             cur = conn.cursor()
 
-            # USERS
             cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,7 +74,6 @@ class Database:
             );
             """)
 
-            # STUDENTS
             cur.execute("""
             CREATE TABLE IF NOT EXISTS students (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,7 +97,6 @@ class Database:
             );
             """)
 
-            # COURSES CATALOG (global)
             cur.execute("""
             CREATE TABLE IF NOT EXISTS courses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -115,7 +105,6 @@ class Database:
             );
             """)
 
-            # student_courses (per-student)
             cur.execute("""
             CREATE TABLE IF NOT EXISTS student_courses (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,7 +118,6 @@ class Database:
             );
             """)
 
-            # prerequisites
             cur.execute("""
             CREATE TABLE IF NOT EXISTS course_prerequisites (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,7 +129,6 @@ class Database:
             );
             """)
 
-            # trajectory plan
             cur.execute("""
             CREATE TABLE IF NOT EXISTS trajectory_plan (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -160,13 +147,12 @@ class Database:
         finally:
             conn.close()
 
-        # seed catalog & sync
         self.ensure_catalog_ready()
 
-    # ---------------- PUBLIC HELPERS ----------------
     def ensure_catalog_ready(self) -> None:
         self._seed_courses_catalog()
         self._sync_student_courses_course_ids()
+        self.fix_empty_course_names()
 
     def _seed_courses_catalog(self) -> None:
         existing = self._fetchall("SELECT name FROM courses;")
@@ -181,7 +167,15 @@ class Database:
         UPDATE student_courses
         SET course_id = (SELECT id FROM courses WHERE courses.name = student_courses.course_name)
         WHERE (course_id IS NULL OR course_id = 0)
-          AND course_name IN (SELECT name FROM courses);
+        AND course_name IN (SELECT name FROM courses);
+        """)
+
+    def fix_empty_course_names(self) -> None:
+        self._execute("""
+            UPDATE student_courses
+            SET course_name = (SELECT name FROM courses WHERE courses.id = student_courses.course_id)
+            WHERE (course_name IS NULL OR TRIM(course_name) = '')
+            AND course_id IS NOT NULL;
         """)
 
     # ======================================================
@@ -233,7 +227,7 @@ class Database:
         )
         existing_names = {r["course_name"] for r in existing}
 
-        inserts: List[Tuple[int, str, int]] = []
+        inserts: List[Tuple[int, str, Optional[int]]] = []
         for cname in DEFAULT_COURSES:
             if cname in existing_names:
                 continue
@@ -263,7 +257,7 @@ class Database:
         )
 
     # ======================================================
-    # CATALOG + PREREQUISITES + PLAN
+    # COURSES / PREREQUISITES
     # ======================================================
     def get_all_courses(self) -> List[Dict[str, Any]]:
         return self._fetchall("SELECT * FROM courses ORDER BY name;")
@@ -275,6 +269,9 @@ class Database:
             WHERE course_id = ?;
         """, (course_id,))
 
+    # ======================================================
+    # TRAJECTORY PLAN
+    # ======================================================
     def get_student_plan(self, student_id: int, semester: str) -> List[Dict[str, Any]]:
         return self._fetchall("""
             SELECT tp.course_id as course_id, c.name as name, tp.status as status
@@ -296,28 +293,19 @@ class Database:
             WHERE student_id = ? AND course_id = ? AND semester = ?;
         """, (student_id, course_id, semester))
 
-def fix_empty_course_names(self) -> None:
-    # якщо у student_courses є пусті/NULL назви — заповнюємо з каталогу
-    self._execute("""
-        UPDATE student_courses
-        SET course_name = (SELECT name FROM courses WHERE courses.id = student_courses.course_id)
-        WHERE (course_name IS NULL OR TRIM(course_name) = '')
-          AND course_id IS NOT NULL;
-    """)
-
-def ensure_catalog_ready(self) -> None:
-    # seed courses if empty
-    existing = self._fetchall("SELECT name FROM courses LIMIT 1;")
-    if not existing:
-        self._executemany(
-            "INSERT INTO courses(name, difficulty) VALUES (?, ?);",
-            [(name, 2.0) for name in DEFAULT_COURSES],
+    def clear_plan(self, student_id: int, semester: str) -> None:
+        self._execute(
+            "DELETE FROM trajectory_plan WHERE student_id = ? AND semester = ?;",
+            (student_id, semester),
         )
 
-    # sync course_id in student_courses
-    self._execute("""
-        UPDATE student_courses
-        SET course_id = (SELECT id FROM courses WHERE courses.name = student_courses.course_name)
-        WHERE (course_id IS NULL OR course_id = 0)
-          AND course_name IN (SELECT name FROM courses);
-    """)
+    def bulk_add_to_plan(self, student_id: int, semester: str, course_ids: List[int]) -> None:
+        if not course_ids:
+            return
+        self._executemany(
+            """
+            INSERT OR IGNORE INTO trajectory_plan(student_id, course_id, semester, status)
+            VALUES (?, ?, ?, 'planned');
+            """,
+            [(student_id, int(cid), semester) for cid in course_ids],
+        )

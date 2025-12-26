@@ -2,14 +2,22 @@ import sqlite3
 import os
 from datetime import datetime
 
-DB_PATH = os.path.join("instance", "app.db")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "system.db")
+
 
 class HistoryManager:
     def __init__(self):
         self._init_table()
 
-    def _init_table(self):
+    def _connect(self):
         conn = sqlite3.connect(DB_PATH)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+        return conn
+
+    def _init_table(self):
+        conn = self._connect()
         cur = conn.cursor()
 
         cur.execute("""
@@ -26,7 +34,7 @@ class HistoryManager:
             epsilon REAL,
             actual REAL,
             error REAL,
-            FOREIGN KEY(student_id) REFERENCES students(id)
+            FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE
         );
         """)
 
@@ -36,9 +44,12 @@ class HistoryManager:
     def add_record(self, student_id, p_initial, p_adjusted, weights, actual):
         error = None
         if actual is not None and p_initial is not None:
-            error = actual - p_initial
+            try:
+                error = float(actual) - float(p_initial)
+            except Exception:
+                error = None
 
-        conn = sqlite3.connect(DB_PATH)
+        conn = self._connect()
         cur = conn.cursor()
 
         cur.execute("""
@@ -64,8 +75,7 @@ class HistoryManager:
         conn.close()
 
     def get_history(self, student_id):
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
+        conn = self._connect()
         cur = conn.cursor()
 
         rows = cur.execute("""

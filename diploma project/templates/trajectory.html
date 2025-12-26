@@ -2,21 +2,68 @@
 {% block title %}Траєкторія{% endblock %}
 
 {% block content %}
+
 <h3>Траєкторія студента: {{ student.name }}</h3>
 <p><b>Семестр:</b> {{ semester }}</p>
 
 <div class="card">
-  <p><b>Прогноз:</b> {{ "%.3f"|format(p_adjusted) if p_adjusted is not none else "—" }}</p>
-  <p><b>Ризик:</b> {{ rec.risk_level }}</p>
+  {% set p_value = (p_adjusted * 100.0) if (p_adjusted is not none and p_adjusted <= 1.0) else p_adjusted %}
+  <p><b>Прогноз:</b> {{ "%.1f"|format(p_value) if p_value is not none else "—" }}</p>
+  <p><b>Ризик:</b> {{ risk }}</p>
 </div>
 
 <div class="card">
-  <h4>Поточний план</h4>
+  <h4>Варіанти траєкторії</h4>
+
+  <div style="border:1px solid #ccc; padding:10px; margin-bottom:10px;">
+    <h5>Варіант A — Поточний план</h5>
+    <p>{{ base_reason }}</p>
+
+    <ul>
+      {% for c in base_plan %}
+        <li>{{ c.name }}</li>
+      {% else %}
+        <li><i>Programming</i></li>
+        <li><i>Algorithms</i></li>
+        <li><i>Mathematics</i></li>
+      {% endfor %}
+    </ul>
+
+    <form method="post" action="{{ url_for('trajectory_apply', student_id=student.id) }}">
+      <input type="hidden" name="semester" value="{{ semester }}">
+      <input type="hidden" name="variant" value="base">
+      <button type="submit">Застосувати поточний план</button>
+    </form>
+  </div>
+
+  <div style="border:1px solid #ccc; padding:10px;">
+    <h5>Варіант B — Рекомендований план</h5>
+    <p>{{ rec_reason }}</p>
+
+    <ul>
+      {% for c in rec_plan %}
+        <li>{{ c.name }}</li>
+      {% else %}
+        <li><i>Додаткові курси можна отримати у викладача</i></li>
+      {% endfor %}
+    </ul>
+
+    <form method="post" action="{{ url_for('trajectory_apply', student_id=student.id) }}">
+      <input type="hidden" name="semester" value="{{ semester }}">
+      <input type="hidden" name="variant" value="rec">
+      <button type="submit">Застосувати рекомендований план</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <h4>Збережений план на семестр</h4>
+
   <ul>
     {% for p in plan %}
       <li>
         {{ p.name }} ({{ p.status }})
-        <form method="POST" action="{{ url_for('trajectory_remove', student_id=student.id) }}" style="display:inline;">
+        <form method="post" action="{{ url_for('trajectory_remove', student_id=student.id) }}" style="display:inline;">
           <input type="hidden" name="semester" value="{{ semester }}">
           <input type="hidden" name="course_id" value="{{ p.course_id }}">
           <button type="submit">Видалити</button>
@@ -29,31 +76,29 @@
 </div>
 
 <div class="card">
-  <h4>Рекомендовано</h4>
-  <ul>
-    {% for c, reason in rec.optimal %}
-      <li>
-        <b>{{ c.name }}</b> — {{ reason }}
-        <form method="POST" action="{{ url_for('trajectory_add', student_id=student.id) }}" style="display:inline;">
-          <input type="hidden" name="semester" value="{{ semester }}">
-          <input type="hidden" name="course_id" value="{{ c.id }}">
-          <button type="submit">Додати</button>
-        </form>
-      </li>
-    {% else %}
-      <li><i>Немає рекомендацій</i></li>
-    {% endfor %}
-  </ul>
+  <h4>Що краще виконати </h4>
+
+  <div style="border:1px solid #ccc; padding:10px; margin-bottom:10px;">
+    <h5>Рекомендовано</h5>
+    <ul>
+      {% for msg in actions.recommended %}
+        <li>{{ msg }}</li>
+      {% else %}
+        <li><i>Немає</i></li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <div style="border:1px solid #ccc; padding:10px;">
+    <h5>Обережно</h5>
+    <ul>
+      {% for msg in actions.caution %}
+        <li>{{ msg }}</li>
+      {% else %}
+        <li><i>Немає</i></li>
+      {% endfor %}
+    </ul>
+  </div>
 </div>
 
-<div class="card">
-  <h4>Обережно</h4>
-  <ul>
-    {% for c, reason in rec.cautious %}
-      <li>{{ c.name }} — <i>{{ reason }}</i></li>
-    {% else %}
-      <li><i>Немає</i></li>
-    {% endfor %}
-  </ul>
-</div>
 {% endblock %}

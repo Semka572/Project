@@ -8,7 +8,8 @@
   <p><b>Студент:</b> {{ student.name }} (ID: {{ student.id }})</p>
 
   {% if p_adjusted is not none %}
-    <p><b>P (adjusted):</b> {{ "%.3f"|format(p_adjusted) }}</p>
+    {% set p_val = (p_adjusted * 100.0) if (p_adjusted <= 1.0) else p_adjusted %}
+    <p><b>P (adjusted):</b> {{ "%.1f"|format(p_val) }}</p>
   {% else %}
     <p><i>Прогноз ще не сформовано</i></p>
   {% endif %}

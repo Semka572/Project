@@ -1,4 +1,3 @@
-# trajectory_recommender.py
 PASS_GRADE = 60.0
 
 def recommend_courses(student, courses_taken, all_courses, prerequisites_map, p_adjusted=None):
@@ -13,18 +12,17 @@ def recommend_courses(student, courses_taken, all_courses, prerequisites_map, p_
         reqs = prerequisites_map.get(course_id, set())
         return reqs.issubset(passed_ids)
 
-    risk_level = "low"
+    risk_level = "Низький"
     if p_adjusted is not None:
         if p_adjusted < 0.5:
-            risk_level = "high"
+            risk_level = "Високий"
         elif p_adjusted < 0.7:
-            risk_level = "medium"
+            risk_level = "Середній"
 
     optimal = []
     cautious = []
     must_fix = []
 
-    # must_fix: failed courses
     for x in courses_taken:
         if x.get("course_id") is None or x.get("grade") is None:
             continue
@@ -42,12 +40,12 @@ def recommend_courses(student, courses_taken, all_courses, prerequisites_map, p_
 
         difficulty = float(c.get("difficulty", 2.0))
 
-        if risk_level == "high":
+        if risk_level == "Високий":
             if difficulty <= 2.0:
                 optimal.append((c, "Низьке навантаження при високому ризику"))
             else:
                 cautious.append((c, "Високе навантаження при високому ризику"))
-        elif risk_level == "medium":
+        elif risk_level == "Середній":
             if difficulty <= 3.0:
                 optimal.append((c, "Збалансований курс при середньому ризику"))
             else:

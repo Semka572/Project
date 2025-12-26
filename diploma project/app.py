@@ -1,6 +1,5 @@
-# ------------------------------------------------------------
-# app.py — main Flask application (Clean + Trajectory) — FIXED
-# ------------------------------------------------------------
+from __future__ import annotations
+
 from flask import (
     Flask,
     request,
@@ -12,13 +11,20 @@ from flask import (
 )
 
 from database import Database
-from ui_templates import LOGIN_PAGE, REGISTER_PAGE, STUDENTS_PAGE, EDIT_PAGE, PREDICTION_PAGE
+from ui_templates import (
+    LOGIN_PAGE,
+    REGISTER_PAGE,
+    STUDENTS_PAGE,
+    EDIT_PAGE,
+    PREDICTION_PAGE,
+)
 
 from prediction_engine import predict
 from stats_manager import compute_stats, save_stats
 from history_manager import history
 from course_manager import course_manager
-from trajectory_recommender import recommend_courses
+from interventions import build_interventions
+from trajectory_planner import build_two_plans
 
 
 app = Flask(__name__)
@@ -32,10 +38,6 @@ db = Database()
 # ------------------------------------------------------------
 def logged_in() -> bool:
     return "user_id" in session
-
-
-def login_required() -> bool:
-    return logged_in()
 
 
 # ------------------------------------------------------------
@@ -54,8 +56,8 @@ def home():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        username = request.form.get("username")
-        password = request.form.get("password")
+        username = request.form.get("username", "")
+        password = request.form.get("password", "")
 
         user = db.get_user(username)
 
@@ -74,8 +76,8 @@ def login():
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
-        username = request.form.get("username")
-        password = request.form.get("password")
+        username = request.form.get("username", "")
+        password = request.form.get("password", "")
 
         if db.get_user(username):
             return render_template_string(REGISTER_PAGE + "<p style='color:red'>User already exists</p>")
@@ -100,7 +102,7 @@ def logout():
 # ------------------------------------------------------------
 @app.route("/students")
 def students():
-    if not login_required():
+    if not logged_in():
         return redirect("/login")
 
     all_students = db.list_students(session["user_id"])
@@ -112,15 +114,13 @@ def students():
 # ------------------------------------------------------------
 @app.route("/add_student", methods=["POST"])
 def add_student():
-    if not login_required():
+    if not logged_in():
         return redirect("/login")
 
     name = request.form.get("name", "Student")
 
-    # Create student and get ID
     sid = db.add_student(session["user_id"], name)
 
-    # IMPORTANT: ensure catalog + create student course rows with NAMES
     db.ensure_catalog_ready()
     course_manager.create_default_courses(sid)
 
@@ -132,22 +132,20 @@ def add_student():
 # ------------------------------------------------------------
 @app.route("/edit/<int:sid>", methods=["GET", "POST"])
 def edit(sid: int):
-    if not login_required():
+    if not logged_in():
         return redirect("/login")
 
     student = db.get_student(sid)
     if not student:
         return "Student not found", 404
 
-    # IMPORTANT: guarantee student has courses with names for UI
     db.ensure_catalog_ready()
     course_manager.create_default_courses(sid)
     courses = course_manager.get_student_courses(sid)
 
     if request.method == "POST":
-        # -------- Update student numeric fields --------
         fields = {}
-        main_keys = ["Gcurrent", "Gmin", "Gmax", "Ls", "Ph", "actual"]
+        main_keys = ["Gcurrent", "Gmin", "Gmax", "Ls", "Ph", "actual", "Ar"]
 
         for key in main_keys:
             val = request.form.get(key)
@@ -160,15 +158,13 @@ def edit(sid: int):
         if fields:
             db.update_student(sid, **fields)
 
-        # -------- Update courses (enabled + grade) --------
         for c in courses:
-            cid = c["id"]
-            enabled_flag = 1 if request.form.get(f"course_{cid}_enabled") else 0
-            grade_raw = request.form.get(f"course_{cid}_grade")
+            row_id = c["id"]
+            enabled_flag = 1 if request.form.get(f"course_{row_id}_enabled") else 0
+            grade_raw = request.form.get(f"course_{row_id}_grade")
             grade_val = float(grade_raw) if grade_raw not in ("", None) else None
-            course_manager.update_course(cid, enabled_flag, grade_val)
+            course_manager.update_course(row_id, enabled_flag, grade_val)
 
-        # keep data consistent
         db.ensure_catalog_ready()
         course_manager.create_default_courses(sid)
 
@@ -182,7 +178,7 @@ def edit(sid: int):
 # ------------------------------------------------------------
 @app.route("/delete/<int:sid>")
 def delete(sid: int):
-    if not login_required():
+    if not logged_in():
         return redirect("/login")
 
     db.delete_student(sid)
@@ -194,7 +190,7 @@ def delete(sid: int):
 # ------------------------------------------------------------
 @app.route("/predict/<int:sid>")
 def do_predict(sid: int):
-    if not login_required():
+    if not logged_in():
         return redirect("/login")
 
     student = db.get_student(sid)
@@ -206,14 +202,11 @@ def do_predict(sid: int):
 
     courses = course_manager.get_student_courses(sid)
 
-    # optional stats
     stats = compute_stats()
     save_stats(stats)
 
-    # MAIN PREDICTION ENGINE
     p_initial, p_adjusted, weights = predict(student, courses)
 
-    # Save history
     history.add_record(
         student_id=sid,
         p_initial=p_initial,
@@ -222,7 +215,6 @@ def do_predict(sid: int):
         actual=student.get("actual"),
     )
 
-    # Render old prediction page (string template) + add trajectory button
     html = render_template_string(
         PREDICTION_PAGE,
         student=student,
@@ -244,11 +236,11 @@ def do_predict(sid: int):
 
 
 # ------------------------------------------------------------
-# TRAJECTORY (NEW UI via templates/)
+# TRAJECTORY (templates/) — TWO PLANS + ACTIONS
 # ------------------------------------------------------------
 @app.route("/trajectory/<int:student_id>")
 def trajectory(student_id: int):
-    if not login_required():
+    if not logged_in():
         return redirect("/login")
 
     semester = request.args.get("semester", "2025-2")
@@ -257,42 +249,22 @@ def trajectory(student_id: int):
     if not student:
         return "Student not found", 404
 
-    # IMPORTANT: ensure catalog exists + student has named course rows
     db.ensure_catalog_ready()
     course_manager.create_default_courses(student_id)
 
-    # Take student courses from course_manager (it repairs names & ids)
     courses_taken = course_manager.get_student_courses(student_id)
 
-    # Catalog for recommendations
-    all_courses = db.get_all_courses()
-
-    # prediction for risk level
     p_initial, p_adjusted, weights = predict(student, courses_taken)
 
-    # prerequisites map: course_id -> set(prereq_ids)
-    prerequisites_map = {}
-    for c in all_courses:
-        cid = int(c["id"])
-        reqs = db.get_prerequisites(cid)
-        prerequisites_map[cid] = {int(r["prerequisite_course_id"]) for r in reqs}
+    base_ids, base_reason, rec_ids, rec_reason, risk = build_two_plans(courses_taken, p_adjusted)
 
-    # Normalize taken courses for recommender:
-    # Use catalog course_id, not student_courses row id
-    taken_norm = []
-    for x in courses_taken:
-        cid = x.get("course_id")
-        if cid is None:
-            continue
-        taken_norm.append({"course_id": int(cid), "grade": x.get("grade")})
+    all_courses = db.get_all_courses()
+    name_by_id = {int(c["id"]): c["name"] for c in all_courses}
 
-    rec = recommend_courses(
-        student=student,
-        courses_taken=taken_norm,
-        all_courses=all_courses,
-        prerequisites_map=prerequisites_map,
-        p_adjusted=p_adjusted,
-    )
+    base_plan = [{"id": cid, "name": name_by_id.get(cid, f"Course #{cid}")} for cid in base_ids]
+    rec_plan = [{"id": cid, "name": name_by_id.get(cid, f"Course #{cid}")} for cid in rec_ids]
+
+    actions = build_interventions(student, courses_taken)
 
     plan = db.get_student_plan(student_id, semester)
 
@@ -301,14 +273,60 @@ def trajectory(student_id: int):
         student=student,
         semester=semester,
         p_adjusted=p_adjusted,
-        rec=rec,
+        risk=risk,
         plan=plan,
+        base_plan=base_plan,
+        rec_plan=rec_plan,
+        base_reason=base_reason,
+        rec_reason=rec_reason,
+        actions=actions,
     )
+
+
+@app.route("/trajectory/<int:student_id>/apply", methods=["POST"])
+def trajectory_apply(student_id: int):
+    if not logged_in():
+        return redirect("/login")
+
+    semester = request.form.get("semester", "2025-2")
+    variant = request.form.get("variant", "base")
+
+    student = db.get_student(student_id)
+    if not student:
+        return "Student not found", 404
+
+    db.ensure_catalog_ready()
+    course_manager.create_default_courses(student_id)
+
+    courses_taken = course_manager.get_student_courses(student_id)
+    p_initial, p_adjusted, weights = predict(student, courses_taken)
+
+    base_ids, base_reason, rec_ids, rec_reason, risk = build_two_plans(courses_taken, p_adjusted)
+
+    chosen_ids = base_ids if variant == "base" else rec_ids
+
+    existing = db.get_student_plan(student_id, semester) or []
+    for item in existing:
+        if isinstance(item, dict):
+            cid = item.get("course_id", item.get("id"))
+        else:
+            cid = item
+        if cid is None:
+            continue
+        try:
+            cid_int = int(cid)
+        except (TypeError, ValueError):
+            continue
+        db.remove_from_plan(student_id, cid_int, semester)
+
+    db.bulk_add_to_plan(student_id, semester, chosen_ids)
+
+    return redirect(url_for("trajectory", student_id=student_id, semester=semester))
 
 
 @app.route("/trajectory/<int:student_id>/add", methods=["POST"])
 def trajectory_add(student_id: int):
-    if not login_required():
+    if not logged_in():
         return redirect("/login")
 
     semester = request.form.get("semester", "2025-2")
@@ -319,7 +337,7 @@ def trajectory_add(student_id: int):
 
 @app.route("/trajectory/<int:student_id>/remove", methods=["POST"])
 def trajectory_remove(student_id: int):
-    if not login_required():
+    if not logged_in():
         return redirect("/login")
 
     semester = request.form.get("semester", "2025-2")
@@ -328,8 +346,5 @@ def trajectory_remove(student_id: int):
     return redirect(url_for("trajectory", student_id=student_id, semester=semester))
 
 
-# ------------------------------------------------------------
-# RUN SERVER
-# ------------------------------------------------------------
 if __name__ == "__main__":
     app.run(debug=True)

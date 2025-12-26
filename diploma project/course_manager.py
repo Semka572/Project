@@ -1,6 +1,3 @@
-# ------------------------------------------------------------
-# course_manager.py — Stable Course Manager (FINAL VERSION)
-# ------------------------------------------------------------
 import os
 import sqlite3
 from typing import List, Dict, Any, Optional
@@ -10,7 +7,7 @@ DB_PATH = os.path.join(BASE_DIR, "system.db")
 
 DEFAULT_COURSES = [
     "Mathematics",
-    "Physics",
+    "Probability and Statistics",
     "Programming",
     "Discrete Structures",
     "Databases",
@@ -30,11 +27,9 @@ class CourseManager:
     def _connect(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
         return conn
 
-    # ------------------------------------------------------------
-    # DB STRUCTURE
-    # ------------------------------------------------------------
     def _ensure_tables(self):
         conn = self._connect()
         cur = conn.cursor()
@@ -51,19 +46,16 @@ class CourseManager:
         CREATE TABLE IF NOT EXISTS student_courses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             student_id INTEGER NOT NULL,
-            course_name TEXT,
+            course_name TEXT NOT NULL,
             enabled INTEGER DEFAULT 0,
-            grade REAL,
-            course_id INTEGER
+            grade REAL DEFAULT NULL,
+            course_id INTEGER DEFAULT NULL
         );
         """)
 
         conn.commit()
         conn.close()
 
-    # ------------------------------------------------------------
-    # INITIAL SEED
-    # ------------------------------------------------------------
     def _seed_courses(self):
         conn = self._connect()
         cur = conn.cursor()
@@ -77,38 +69,32 @@ class CourseManager:
         conn.commit()
         conn.close()
 
-    # ------------------------------------------------------------
-    # AUTO REPAIR SYSTEM (IMPORTANT)
-    # ------------------------------------------------------------
     def _repair_student_courses(self):
         conn = self._connect()
         cur = conn.cursor()
 
-        # Fill missing names from catalog
         cur.execute("""
         UPDATE student_courses
         SET course_name = (
             SELECT name FROM courses WHERE courses.id = student_courses.course_id
         )
         WHERE (course_name IS NULL OR TRIM(course_name) = '')
-          AND course_id IS NOT NULL;
+        AND course_id IS NOT NULL;
         """)
 
-        # Fill missing course_id from name
         cur.execute("""
         UPDATE student_courses
         SET course_id = (
             SELECT id FROM courses WHERE courses.name = student_courses.course_name
         )
-        WHERE course_id IS NULL AND course_name IS NOT NULL;
+        WHERE (course_id IS NULL OR course_id = 0)
+        AND course_name IS NOT NULL
+        AND TRIM(course_name) <> '';
         """)
 
         conn.commit()
         conn.close()
 
-    # ------------------------------------------------------------
-    # CREATE DEFAULT COURSES FOR STUDENT
-    # ------------------------------------------------------------
     def create_default_courses(self, student_id: int):
         conn = self._connect()
         cur = conn.cursor()
@@ -136,9 +122,6 @@ class CourseManager:
 
         self._repair_student_courses()
 
-    # ------------------------------------------------------------
-    # GET COURSES FOR STUDENT
-    # ------------------------------------------------------------
     def get_student_courses(self, student_id: int) -> List[Dict[str, Any]]:
         self._repair_student_courses()
 
@@ -162,9 +145,6 @@ class CourseManager:
         conn.close()
         return [dict(r) for r in rows]
 
-    # ------------------------------------------------------------
-    # UPDATE COURSE
-    # ------------------------------------------------------------
     def update_course(self, course_row_id: int, enabled: int, grade: Optional[float]):
         conn = self._connect()
         conn.execute("""
@@ -178,7 +158,4 @@ class CourseManager:
         self._repair_student_courses()
 
 
-# ------------------------------------------------------------
-# GLOBAL INSTANCE
-# ------------------------------------------------------------
 course_manager = CourseManager()

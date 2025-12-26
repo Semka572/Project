@@ -205,7 +205,10 @@ EDIT_PAGE = """
             <label>Ph (Historical performance)</label>
             <input type="number" name="Ph" step="0.01" value="{{ student.Ph or '' }}">
 
-            <label>Actual Outcome (0..1)</label>
+            <label>Ar (Attendance, 0..1 or 0..100)</label>
+            <input type="number" name="Ar" step="0.01" value="{{ student.Ar or '' }}">
+
+            <label>Actual Outcome (0..1 or 0..100)</label>
             <input type="number" name="actual" step="0.01" value="{{ student.actual or '' }}">
 
 
@@ -265,10 +268,12 @@ PREDICTION_PAGE = """
     <div class="box">
         <h2>Prediction for {{ student.name }}</h2>
 
-        <p><b>Initial Probability:</b> {{ p_initial }}</p>
+        {% set p_i = (p_initial * 100.0) if (p_initial is not none and p_initial <= 1.0) else p_initial %}
+        <p><b>Initial Probability:</b> {{ "%.1f"|format(p_i) if p_i is not none else "—" }}</p>
 
-        {% if p_adjusted %}
-            <p><b>Adjusted Probability:</b> {{ p_adjusted }}</p>
+        {% if p_adjusted is not none %}
+            {% set p_a = (p_adjusted * 100.0) if (p_adjusted <= 1.0) else p_adjusted %}
+            <p><b>Adjusted Probability:</b> {{ "%.1f"|format(p_a) }}</p>
 
             <h3>Adjusted Weights:</h3>
             <ul>
@@ -289,5 +294,3 @@ PREDICTION_PAGE = """
 </body>
 </html>
 """
-
-

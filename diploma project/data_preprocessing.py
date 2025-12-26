@@ -3,7 +3,6 @@ import numpy as np
 # -----------------------------
 # Data Preprocessing Module
 # -----------------------------
-# This module performs all formal steps described in the thesis:
 # 1) Cleaning missing values
 # 2) Min-Max normalization
 # 3) Log transformation for skewed data
