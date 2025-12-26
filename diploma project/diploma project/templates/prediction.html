@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Прогноз{% endblock %}
+
+{% block content %}
+<h3>Прогноз успішності</h3>
+
+<div class="card">
+  <p><b>Студент:</b> {{ student.name }} (ID: {{ student.id }})</p>
+
+  {% if p_adjusted is not none %}
+    <p><b>P (adjusted):</b> {{ "%.3f"|format(p_adjusted) }}</p>
+  {% else %}
+    <p><i>Прогноз ще не сформовано</i></p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h4>Управління траєкторією</h4>
+  <a href="{{ url_for('trajectory', student_id=student.id, semester='2025-2') }}">
+    <button type="button">Перейти до траєкторії</button>
+  </a>
+</div>
+{% endblock %}
